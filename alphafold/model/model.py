@@ -167,6 +167,11 @@ class RunModel:
       return result, prev
 
 
+    if return_representations:
+      single_act = self._params['alphafold/alphafold_iteration/evoformer/single_activations']
+      single_act = jax.tree_map(lambda x:np.asarray(x, dtype=np.float16), single_act)          
+
+
     # initialize random key
     key = jax.random.PRNGKey(random_seed)
     
@@ -185,9 +190,9 @@ class RunModel:
         result, prev = run(sub_key, sub_feat, prev)
         
         if return_representations:
-
+          single = prev["prev_msa_first_row"]
           result["representations"] = {"pair":   prev["prev_pair"],
-                                       "single": prev["prev_msa_first_row"]}
+                                       "single": single @ single_act["weights"] + single_act["bias"]}
                                        
         # callback
         if callback is not None: callback(result, r)
