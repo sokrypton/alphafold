@@ -122,6 +122,7 @@ class RunModel:
               feat: features.FeatureDict,
               random_seed: int = 0,
               return_representations: bool = False,
+              fix_single_representation: bool = True,
               callback: Any = None) -> Mapping[str, Any]:
     """Makes a prediction by inferencing the model on the provided features.
 
@@ -167,10 +168,9 @@ class RunModel:
       return result, prev
 
 
-    if return_representations:
+    if return_representations and fix_single_representation:
       single_act = self._params['alphafold/alphafold_iteration/evoformer/single_activations']
-      single_act = jax.tree_map(lambda x:np.asarray(x, dtype=np.float16), single_act)          
-
+      single_act = jax.tree_map(lambda x:np.asarray(x, dtype=np.float16), single_act)
 
     # initialize random key
     key = jax.random.PRNGKey(random_seed)
@@ -191,8 +191,10 @@ class RunModel:
         
         if return_representations:
           single = prev["prev_msa_first_row"]
+          if fix_single_representation:
+            single = single @ single_act["weights"] + single_act["bias"]
           result["representations"] = {"pair":   prev["prev_pair"],
-                                       "single": single @ single_act["weights"] + single_act["bias"]}
+                                       "single": single}
                                        
         # callback
         if callback is not None: callback(result, r)
