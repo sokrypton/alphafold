@@ -16,6 +16,7 @@
 
 import jax.numpy as jnp
 import jax
+from typing import Any, Mapping, Optional, Union, List, Dict
 import numpy as np
 from alphafold.common import residue_constants
 import scipy.special
@@ -168,6 +169,75 @@ def predicted_tm_score(logits, breaks, residue_weights = None,
 
   return (per_alignment * residue_weights).max()
 
+
+def predicted_tm_score_new(logits, breaks, residue_weights = None,
+    asym_id = None, use_jnp=False):
+  """Computes predicted TM alignment or predicted interface TM alignment score.
+
+  Args:
+    logits: [num_res, num_res, num_bins] the logits output from
+      PredictedAlignedErrorHead.
+    breaks: [num_bins] the error bins.
+    residue_weights: [num_res] the per residue weights to use for the
+      expectation.
+    asym_id: [num_res] the asymmetric unit ID - the chain ID. Only needed for
+      ipTM calculation.
+
+  Returns:
+    ptm_score: The predicted TM alignment or the predicted iTM score.
+  """
+  if use_jnp:
+    _np, _softmax = jnp, jax.nn.softmax
+  else:
+    _np, _softmax = np, scipy.special.softmax
+
+  # residue_weights has to be in [0, 1], but can be floating-point, i.e. the
+  # exp. resolved head's probability.
+  if residue_weights is None:
+    residue_weights = _np.ones(logits.shape[0])
+
+  bin_centers = _calculate_bin_centers(breaks, use_jnp=use_jnp)
+  num_res = residue_weights.shape[0]
+
+  # Clip num_res to avoid negative/undefined d0.
+  clipped_num_res = _np.maximum(residue_weights.sum(), 19)
+
+  # Compute d_0(num_res) as defined by TM-score, eqn. (5) in Yang & Skolnick
+  # "Scoring function for automated assessment of protein structure template
+  # quality", 2004: http://zhanglab.ccmb.med.umich.edu/papers/2004_3.pdf
+  d0 = 1.24 * (clipped_num_res - 15) ** (1./3) - 1.8
+
+  # Convert logits to probs.
+  probs = _softmax(logits, axis=-1)
+
+  # TM-Score term for every bin.
+  tm_per_bin = 1. / (1 + _np.square(bin_centers) / _np.square(d0))
+  # E_distances tm(distance).
+  predicted_tm_term = (probs * tm_per_bin).sum(-1)
+
+  ## TO SOLVE, HOW TO GET CHAIN NUMBER !!!
+
+  chain_num = jnp.max(asym_id) + 1
+
+  def get_cross_iptm(i, j):
+    pair_mask = jnp.logical_and(i * jnp.ones((num_res))[:, None] == asym_id[None, :] , j*jnp.ones((num_res))[None, :] == asym_id[:, None])
+    chain_chain_predicted_tm_term = predicted_tm_term * pair_mask
+    pair_residue_weights = pair_mask * (residue_weights[None, :] * residue_weights[:, None])
+    normed_residue_mask = pair_residue_weights / (1e-8 + pair_residue_weights.sum(-1, keepdims=True))
+    per_alignment = (chain_chain_predicted_tm_term * normed_residue_mask).sum(-1)
+    return (per_alignment * residue_weights).max()
+
+  iptm_matrix_list = []
+
+  for i in jnp.arange(chain_num):
+      local_list = []
+      for j in jnp.arange(chain_num):
+          local_list.append(get_cross_iptm(i, j))
+      iptm_matrix_list.append(local_list)
+  
+  return(iptm_matrix_list)
+
+
 def get_confidence_metrics(prediction_result, mask, rank_by = "plddt", use_jnp=False):
   """Post processes prediction_result to get confidence metrics."""  
   confidence_metrics = {}
@@ -195,6 +265,13 @@ def get_confidence_metrics(prediction_result, mask, rank_by = "plddt", use_jnp=F
           residue_weights=mask,
           asym_id=prediction_result['predicted_aligned_error']['asym_id'],
           use_jnp=use_jnp)
+      confidence_metrics['new_iptm'] = predicted_tm_score_new(
+          logits=prediction_result['predicted_aligned_error']['logits'],
+          breaks=prediction_result['predicted_aligned_error']['breaks'],
+          residue_weights=mask,
+          asym_id=prediction_result['predicted_aligned_error']['asym_id'],
+          use_jnp=use_jnp
+          )
 
   # compute mean_score
   if rank_by == "multimer":
