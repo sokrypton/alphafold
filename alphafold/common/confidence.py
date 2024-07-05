@@ -170,8 +170,8 @@ def predicted_tm_score(logits, breaks, residue_weights = None,
   return (per_alignment * residue_weights).max()
 
 
-def predicted_tm_score_new(logits, breaks, residue_weights = None,
-    asym_id = None, use_jnp=False):
+def predicted_tm_score_chain(logits, breaks, residue_weights = None,
+    asym_id = None, use_jnp=False, chain_num=None):
   """Computes predicted TM alignment or predicted interface TM alignment score.
 
   Args:
@@ -190,6 +190,9 @@ def predicted_tm_score_new(logits, breaks, residue_weights = None,
     _np, _softmax = jnp, jax.nn.softmax
   else:
     _np, _softmax = np, scipy.special.softmax
+
+  if chain_num is None:
+    chain_num = 1
 
   # residue_weights has to be in [0, 1], but can be floating-point, i.e. the
   # exp. resolved head's probability.
@@ -215,10 +218,8 @@ def predicted_tm_score_new(logits, breaks, residue_weights = None,
   # E_distances tm(distance).
   predicted_tm_term = (probs * tm_per_bin).sum(-1)
 
-  ## TO SOLVE, HOW TO GET CHAIN NUMBER !!!
-
-  chain_num = jnp.max(asym_id) + 1
-
+  # jax.debug.print('residue weights = {x}',x=residue_weights)
+  
   def get_cross_iptm(i, j):
     pair_mask = jnp.logical_and(i * jnp.ones((num_res))[:, None] == asym_id[None, :] , j*jnp.ones((num_res))[None, :] == asym_id[:, None])
     chain_chain_predicted_tm_term = predicted_tm_term * pair_mask
@@ -235,10 +236,10 @@ def predicted_tm_score_new(logits, breaks, residue_weights = None,
           local_list.append(get_cross_iptm(i, j))
       iptm_matrix_list.append(local_list)
   
-  return(iptm_matrix_list)
+  return(iptm_matrix_list, predicted_tm_term)
 
 
-def get_confidence_metrics(prediction_result, mask, rank_by = "plddt", use_jnp=False):
+def get_confidence_metrics(prediction_result, mask, rank_by = "plddt", use_jnp=False, chain_num=None):
   """Post processes prediction_result to get confidence metrics."""  
   confidence_metrics = {}
   plddt = compute_plddt(prediction_result['predicted_lddt']['logits'], use_jnp=use_jnp)
@@ -265,12 +266,13 @@ def get_confidence_metrics(prediction_result, mask, rank_by = "plddt", use_jnp=F
           residue_weights=mask,
           asym_id=prediction_result['predicted_aligned_error']['asym_id'],
           use_jnp=use_jnp)
-      confidence_metrics['new_iptm'] = predicted_tm_score_new(
+      confidence_metrics['chain_iptm'], confidence_metrics['ptm_matrix'] = predicted_tm_score_chain(
           logits=prediction_result['predicted_aligned_error']['logits'],
           breaks=prediction_result['predicted_aligned_error']['breaks'],
           residue_weights=mask,
           asym_id=prediction_result['predicted_aligned_error']['asym_id'],
-          use_jnp=use_jnp
+          use_jnp=use_jnp,
+          chain_num=chain_num,
           )
 
   # compute mean_score
