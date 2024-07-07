@@ -461,12 +461,18 @@ class AlphaFold(hk.Module):
     if not return_representations:
       del ret['representations']
 
+    # Extract chain NUM # MODIFIED
+    chain_num = c.embeddings_and_evoformer.max_relative_chain + 1 # MODIFIED
+
     # add confidence metrics
+
     ret.update(confidence.get_confidence_metrics(
       prediction_result=ret,
       mask=batch["seq_mask"],
       rank_by=self.config.rank_by,
-      use_jnp=True))
+      use_jnp=True,
+      chain_num=chain_num # MODIFIED
+      ))
 
     ret["tol"] = confidence.compute_tol(
       prev["prev_pos"], 
